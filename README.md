@@ -7,7 +7,7 @@ This wrapper adds a layer of parental control and session management that standa
 
 ## 🛡️ Features
 
-*   **🎮 Controller Security Lock**: Before the game launches, a "kiosk" lock screen (via Firefox) appears. The game only starts after a specific button code (e.g., A, B, A, B) is entered on a connected gamepad.
+*   **🎮 Controller and Keyboard Security Lock**: Before the game launches, a "kiosk" lock screen (via Firefox) appears. The game only starts after a specific button code (e.g., A, B, A, B) is entered on a connected gamepad. Added support for keyboard using the same pattern but instead of A and B its Up and Down. Code set by default using keyboad Up Down Up Down.
 *   **⏳ Playtime Limits**: Enforces a hard playtime limit (default: 1 hour). The game automatically closes when time is up.
 *   **💀 Kill Switch**: Pressing the **Xbox / Guide button** on the controller immediately kills the game and the session. Perfect for quickly exiting stubborn games.
 *   **👀 Process Watchdog**: Monitors the game process. If the game crashes or is closed manually, the script cleans up immediately.
@@ -30,7 +30,7 @@ Open `launch_heroic.sh` in a text editor to customize:
 2.  **Playtime**: Change `PLAYTIME_LIMIT=3600` (in seconds) to set the allowed session duration.
 3.  **Lock Screen**: The script generates a temporary HTML file for the lock screen. You can customize the HTML in the `KIOSK_FILE` section.
 
-### Firefox Configuration (Crucial)
+### Firefox Configuration (This may no longer be needed with profiles working)
 To prevent Firefox from getting stuck in "Safe Mode" or showing a crash recovery dialog after the script kills it:
 1.  Open Firefox and go to `about:config`.
 2.  Search for `toolkit.startup.max_resumed_crashes`.
