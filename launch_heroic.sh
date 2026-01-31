@@ -15,6 +15,15 @@ if [ "$DEBUG" = "true" ]; then
     exec > >(tee -a "$LOG_FILE") 2>&1
     set -x
     LISTENER_LOG="$LOG_FILE"
+
+    # --- DEBUG: LOG ENVIRONMENT ---
+    echo "--- ENVIRONMENT CHECK ---"
+    env | grep -E "DISPLAY|XAUTHORITY|USER|HOME|XDG_"
+    echo "--- PROCESS INFO ---"
+    echo "My PID: $$"
+    echo "My Parent PID: $PPID"
+    echo "Command Line: $0 $@"
+    echo "-------------------------"
 else
     LISTENER_LOG="/dev/null"
 fi
@@ -34,43 +43,93 @@ SCRIPT_PID=$$
 # ==========================================
 #      THE CONTROLLER LOCK (FIXED EXIT)
 # ==========================================
-# DEFAULT CODE: 0,1,0,1 (Update this to your code!)
+# DEFAULT CODE: 0,1,0,1 (Up, Down, Up, Down)
 SECRET_CODE="0,1,0,1" 
 LOCK_TIMEOUT=30
 
+# --- PRE-FLIGHT CHECK ---
+# If the display system isn't ready, abort immediately to prevent zombie processes.
+echo "Checking Display Readiness (DISPLAY=$DISPLAY)..."
+if ! xset q >> "$LISTENER_LOG" 2>&1; then
+    echo "❌ FATAL: Display not ready (xset failed). Aborting session."
+    exit 1
+fi
+
 # --- KIOSK MESSAGE ---
 # Kill any existing Firefox instances to prevent conflicts (User Request)
-pkill -f firefox
+# Log what we find before killing to debug "suicide" issues
+echo "Cleaning up old Firefox instances..."
+
+# Use SAFE search (Process Name only, no -f) to avoid killing Sunshine/Script/Parent
+PIDS_TO_KILL=$(pgrep -x "firefox|firefox-bin" | grep -vE "^($SCRIPT_PID|$PPID)$")
+
+if [ -n "$PIDS_TO_KILL" ]; then
+    echo "Found old Firefox processes: $PIDS_TO_KILL"
+    # Sleep briefly to ensure logs flush before killing potentially dangerous processes
+    sleep 1
+    echo "$PIDS_TO_KILL" | xargs -r kill
+else
+    echo "No old Firefox processes found."
+fi
+
 # Wait for Firefox to close (max 1s) instead of hard sleep
 for i in {1..10}; do
-    pgrep -f firefox | grep -v "^$SCRIPT_PID$" >/dev/null || break
+    pgrep -x "firefox|firefox-bin" | grep -v "^$SCRIPT_PID$" >/dev/null || break
+    pgrep -x "firefox|firefox-bin" | grep -vE "^($SCRIPT_PID|$PPID)$" >/dev/null || break
     sleep 0.1
 done
 
 KIOSK_FILE="/home/hambergerclan/kiosk_lock.html"
+# Create a temporary profile to bypass Keyring/Profile locks on reboot
+# Use a directory in HOME because Snap Firefox often cannot read /tmp
+KIOSK_PROFILE=$(mktemp -d "$HOME/firefox_kiosk_XXXXXX")
+echo "Created Profile: $KIOSK_PROFILE"
+ls -ld "$KIOSK_PROFILE"
+
 echo "<html><body style='background-color:black;color:white;display:flex;justify-content:center;align-items:center;height:100vh;font-family:sans-serif;text-align:center;cursor:none;'><h1 style='font-size:4em;'>Please ask Mom and Dad<br>for permission</h1></body></html>" > "$KIOSK_FILE"
 
-nohup firefox --kiosk --new-window "file://$KIOSK_FILE" >/dev/null 2>&1 &
+nohup firefox --kiosk --new-window --profile "$KIOSK_PROFILE" "file://$KIOSK_FILE" >> "$LISTENER_LOG" 2>&1 &
 KIOSK_PID=$!
 trap "kill $KIOSK_PID 2>/dev/null; rm -f \"$KIOSK_FILE\"; exit" SIGINT SIGTERM
+echo "Launched Kiosk (PID: $KIOSK_PID)"
+
+# Verify launch status
+sleep 1
+if ! kill -0 $KIOSK_PID 2>/dev/null; then
+    wait $KIOSK_PID 2>/dev/null
+    EXIT_CODE=$?
+    echo "❌ FATAL: Firefox crashed immediately (Exit Code: $EXIT_CODE). Aborting."
+    ls -A "$KIOSK_PROFILE"  # Log profile contents to see if it initialized
+    rm -f "$KIOSK_FILE"
+    [ -n "$KIOSK_PROFILE" ] && rm -rf "$KIOSK_PROFILE"
+    exit 1
+fi
+
+trap "kill $KIOSK_PID 2>/dev/null; rm -f \"$KIOSK_FILE\"; [ -n \"$KIOSK_PROFILE\" ] && rm -rf \"$KIOSK_PROFILE\"; exit" SIGINT SIGTERM
 
 echo "🔒 SECURITY LOCK ACTIVE"
 
 python3 -c "
-import struct, sys, time, select, glob
+import struct, sys, time, select, glob, os
 
 code = [$SECRET_CODE]
 entered = []
 timeout = $LOCK_TIMEOUT
 
-# Manage devices: Path -> File Handle
-devices = {}
+# Manage devices: File Handle -> Info Dict
+inputs = {}
 
-print('--- WATCHING FOR CONTROLLERS ---')
+print(f'DEBUG: Code required: {code}')
+print('--- WATCHING FOR CONTROLLERS & KEYBOARDS ---')
 sys.stdout.flush()
 
 start_time = time.time()
 last_scan = 0
+
+# Detect architecture for event structure (64-bit vs 32-bit)
+is_64bits = sys.maxsize > 2**32
+ev_fmt = 'llHHi' if is_64bits else 'IIHHi'
+ev_size = struct.calcsize(ev_fmt)
 
 while True:
     current_time = time.time()
@@ -83,56 +142,87 @@ while True:
     # 2. SCAN FOR NEW DEVICES (Every 0.5s)
     if current_time - last_scan > 0.5:
         try:
-            found_paths = glob.glob('/dev/input/js*')
+            js_paths = glob.glob('/dev/input/js*')
             
-            # Add New
-            for path in found_paths:
-                if path not in devices:
-                    try:
-                        devices[path] = open(path, 'rb')
-                        print(f'Connected: {path}')
-                        sys.stdout.flush()
-                    except Exception:
-                        pass
+            # Improved Keyboard Discovery
+            kbd_paths = glob.glob('/dev/input/by-id/*-kbd*')
+            try:
+                with open('/proc/bus/input/devices', 'r') as f:
+                    for line in f:
+                        if line.startswith('H:') and 'kbd' in line:
+                            for part in line.split():
+                                if part.startswith('event'):
+                                    kbd_paths.append('/dev/input/' + part)
+            except: pass
+            
+            # Helper to add device safely
+            def add_dev(path, dtype):
+                real = os.path.realpath(path)
+                for info in inputs.values():
+                    if info['real_path'] == real: return
+                try:
+                    f = open(path, 'rb')
+                    inputs[f] = {'type': dtype, 'path': path, 'real_path': real}
+                    print(f'Connected {dtype}: {path}')
+                    sys.stdout.flush()
+                except Exception as e:
+                    print(f'Failed to connect {path}: {e}')
+                    sys.stdout.flush()
+
+            for p in js_paths: add_dev(p, 'js')
+            for p in kbd_paths: add_dev(p, 'kbd')
             
             # Remove Lost
-            for path in list(devices.keys()):
-                if path not in found_paths:
-                    try:
-                        devices[path].close()
-                    except Exception:
-                        pass
-                    del devices[path]
+            found_paths = set(js_paths + kbd_paths)
+            for f in list(inputs.keys()):
+                if inputs[f]['path'] not in found_paths:
+                    try: f.close()
+                    except: pass
+                    del inputs[f]
             last_scan = current_time
         except Exception:
             pass
 
     # 3. READ INPUTS
-    if devices:
-        inputs = list(devices.values())
-        readable, _, _ = select.select(inputs, [], [], 0.1)
+    if inputs:
+        readable, _, _ = select.select(list(inputs.keys()), [], [], 0.1)
 
         for f in readable:
             try:
-                data = f.read(8)
-                if not data: continue 
+                dev_type = inputs[f]['type']
+                btn_val = None
+
+                if dev_type == 'js':
+                    data = f.read(8)
+                    if not data: continue 
+                    _, value, type, number = struct.unpack('IhBB', data)
+                    if type == 1 and value == 1: btn_val = number
                 
-                _, value, type, number = struct.unpack('IhBB', data)
-                
-                # Type 1 = Button, Value 1 = Pressed
-                if type == 1 and value == 1:
-                    print(f'BUTTON: {number}')
+                elif dev_type == 'kbd':
+                    data = f.read(ev_size)
+                    if not data: continue
+                    _, _, type, code_val, value = struct.unpack(ev_fmt, data)
+                    # Type 1=EV_KEY, Value 1=Pressed. 103=Up, 108=Down
+                    if type == 1 and value == 1:
+                        if code_val == 103: btn_val = 0
+                        elif code_val == 108: btn_val = 1
+
+                if btn_val is not None:
+                    print(f'INPUT: {btn_val}')
                     sys.stdout.flush()
                     
-                    if number == code[len(entered)]:
-                        entered.append(number)
+                    if btn_val == code[len(entered)]:
+                        entered.append(btn_val)
                         if entered == code:
                             print('ACCESS GRANTED.')
                             sys.exit(0)
                     else:
+                        if len(entered) > 0:
+                            print(f'DEBUG: Wrong input {btn_val}. Resetting sequence.')
+                            sys.stdout.flush()
                         entered = []
-                        if number == code[0]:
-                            entered.append(number)
+                        if btn_val == code[0]:
+                            entered.append(btn_val)
             except Exception:
                 pass
     else:
@@ -142,6 +232,7 @@ LOCK_RESULT=$?
 
 kill $KIOSK_PID 2>/dev/null
 rm -f "$KIOSK_FILE"
+[ -n "$KIOSK_PROFILE" ] && rm -rf "$KIOSK_PROFILE"
 
 if [ $LOCK_RESULT -ne 0 ]; then
     echo "❌ ACCESS DENIED."
