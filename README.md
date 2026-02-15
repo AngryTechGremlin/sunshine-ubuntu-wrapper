@@ -7,7 +7,7 @@ This wrapper adds a layer of parental control and session management that standa
 
 ## 🛡️ Features
 
-*   **🎮 Controller and Keyboard Security Lock**: Before the game launches, a "kiosk" lock screen (via Firefox) appears. The game only starts after a specific button code (e.g., A, B, A, B) is entered on a connected gamepad. Added support for keyboard using the same pattern but instead of A and B its Up and Down. Code set by default using keyboad Up Down Up Down.
+*   **🎮 Controller and Keyboard Security Lock**: Before the game launches, a "kiosk" lock screen (via Firefox) appears. The game only starts after a specific button code (e.g., A, B, A, B) is entered on a connected gamepad or keyboard. The default code sequence is A, B, A, B.
 *   **⏳ Playtime Limits**: Enforces a hard playtime limit (default: 1 hour). The game automatically closes when time is up.
 *   **💀 Kill Switch**: Pressing the **Xbox / Guide button** on the controller immediately kills the game and the session. Perfect for quickly exiting stubborn games.
 *   **👀 Process Watchdog**: Monitors the game process. If the game crashes or is closed manually, the script cleans up immediately.
@@ -16,25 +16,24 @@ This wrapper adds a layer of parental control and session management that standa
 ## 📋 Requirements
 
 *   **Linux OS**
-*   **Python 3** (Standard library only, no `pip` packages required)
+*   **Python 3** and **pip**
+*   **python-evdev** library (e.g., `sudo pip install evdev`)
 *   **Firefox** (Used for the lock screen kiosk mode)
 *   **Heroic Games Launcher** or **Steam**
 *   **Sunshine** (Required)
 
 ## ⚙️ Configuration
 
-Open `launch_heroic.sh` in a text editor to customize:
+Configuration is done by editing the scripts directly.
 
-1.  **Secret Code**: Change `SECRET_CODE="0,1,0,1"` to your desired button sequence.
-    *   *Note: 0=A, 1=B, etc. Check your controller mappings.*
-2.  **Playtime**: Change `PLAYTIME_LIMIT=3600` (in seconds) to set the allowed session duration.
-3.  **Lock Screen**: The script generates a temporary HTML file for the lock screen. You can customize the HTML in the `KIOSK_FILE` section.
+1.  **Secret Code**: Open `controller_lock.py` and modify the `UNLOCK_SEQUENCE` list.
+    *   This sequence applies to both controllers and keyboards.
+    *   `ACTION_A` is the 'A' button on a controller or 'A' key on the keyboard.
+    *   `ACTION_B` is the 'B' button on a controller or 'B' key on the keyboard.
 
-### Firefox Configuration (This may no longer be needed with profiles working)
-To prevent Firefox from getting stuck in "Safe Mode" or showing a crash recovery dialog after the script kills it:
-1.  Open Firefox and go to `about:config`.
-2.  Search for `toolkit.startup.max_resumed_crashes`.
-3.  Set the value to `-1`.
+2.  **Playtime Limit**: Open `launch_heroic.sh` and change the `LIMIT=3600` variable (value is in seconds).
+
+3.  **Lock Screen Message**: Open `launch_heroic.sh` and find the `echo "<html>..."` line to change the message displayed on the lock screen.
 
 ## 🚀 Usage
 
