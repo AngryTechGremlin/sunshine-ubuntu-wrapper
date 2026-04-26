@@ -2,11 +2,12 @@
 
 # --- CONFIG ---
 APPS_JSON="$HOME/.config/sunshine/apps.json"
+SUNSHINE_COVERS="$HOME/.config/sunshine/covers"
 STEAM_CACHE="$HOME/.steam/steam/appcache/librarycache"
 STEAM_APPS_DIR="$HOME/.steam/steam/steamapps"
 [ -d "$HOME/.local/share/Steam/steamapps" ] && STEAM_APPS_DIR="$HOME/.local/share/Steam/steamapps"
 
-HEROIC_CONFIG_DIR="$HOME/.var/app/com.heroicgameslauncher.hgl/config/heroic"
+mkdir -p "$SUNSHINE_COVERS"
 
 # 1. Extract existing configured games
 EXISTING_GAMES_DATA=$(jq -r '.apps[].cmd | select(length > 0) | select(contains("./launch_heroic.sh"))' "$APPS_JSON" | sed -E 's/.*launch_heroic\.sh ([^ ]+) "([^"]+)" [0-9]+ ([^ ]+)/\1|\2|\3/')
@@ -33,10 +34,22 @@ find_exe() {
     echo "UNKNOWN_EXE"
 }
 
-find_steam_image() {
+# 3. Image Handling
+process_steam_image() {
     local id="$1"
-    local img="$STEAM_CACHE/$id/library_600x900.jpg"
-    [ -f "$img" ] && echo "$img" || echo ""
+    local name="$2"
+    local src="$STEAM_CACHE/$id/library_600x900.jpg"
+    
+    if [ -f "$src" ]; then
+        # Create a safe filename for Sunshine
+        local safe_name=$(echo "$name" | sed 's/[^a-zA-Z0-9]//g')
+        local dst="$SUNSHINE_COVERS/${safe_name}.png"
+        # Convert to PNG and upscale for Sunshine/Moonlight compatibility
+        ffmpeg -i "$src" -vf "scale=528:-1" -update 1 "$dst" -y >/dev/null 2>&1
+        echo "$dst"
+    else
+        echo ""
+    fi
 }
 
 echo "Scanning for new games..."
@@ -49,9 +62,10 @@ for acf in "$STEAM_APPS_DIR"/appmanifest_*.acf; do
     NAME=$(grep -Po '(?<="name"\t\t")[^"]+' "$acf")
     INSTALL_DIR=$(grep -Po '(?<="installdir"\t\t")[^"]+' "$acf")
     case "$NAME" in "Steamworks Common Redistributables"|"Proton"*|"Steam Linux Runtime"*) continue ;; esac
+    
     FULL_PATH="$STEAM_APPS_DIR/common/$INSTALL_DIR"
     EXE=$(find_exe "$FULL_PATH" "$NAME")
-    IMG=$(find_steam_image "$APP_ID")
+    IMG=$(process_steam_image "$APP_ID" "$NAME")
 
     if ! is_configured "$APP_ID" "$EXE" "steam"; then
         NEW_APP=$(jq -n --arg name "$NAME" --arg id "$APP_ID" --arg exe "$EXE" --arg img "$IMG" --arg home "$HOME" '{name: $name, cmd: ("./launch_heroic.sh " + $id + " \"" + $exe + "\" 30 steam"), "image-path": $img, "auto-detach": true, "wait-all": true, "exit-timeout": 10, "working-dir": $home}')
@@ -59,17 +73,8 @@ for acf in "$STEAM_APPS_DIR"/appmanifest_*.acf; do
     fi
 done
 
-# --- HEROIC SCAN (Epic/Amazon/GOG) ---
-EPIC_INSTALLED="$HEROIC_CONFIG_DIR/legendaryConfig/legendary/installed.json"
-if [ -f "$EPIC_INSTALLED" ]; then
-    while read -r row; do
-        ID=$(echo "$row" | jq -r '.app_name'); NAME=$(echo "$row" | jq -r '.title'); EXE=$(echo "$row" | jq -r '.executable')
-        if ! is_configured "$ID" "$EXE" "legendary"; then
-            NEW_APP=$(jq -n --arg name "$NAME" --arg id "$ID" --arg exe "$EXE" --arg home "$HOME" '{name: $name, cmd: ("./launch_heroic.sh " + $id + " \"" + $exe + "\" 30 legendary"), "auto-detach": true, "wait-all": true, "exit-timeout": 10, "working-dir": $home}')
-            NEW_APPS_JSON="$NEW_APPS_JSON$NEW_APP,"
-        fi
-    done < <(jq -c '.[]' "$EPIC_INSTALLED")
-fi
+# --- HEROIC SCAN ---
+# (Heroic games will use existing discovery, images added manually as needed)
 
 if [ -z "$NEW_APPS_JSON" ]; then
     echo "No new games found."
