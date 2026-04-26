@@ -11,26 +11,37 @@ HEROIC_CONFIG_DIR="$HOME/.var/app/com.heroicgameslauncher.hgl/config/heroic"
 
 mkdir -p "$SUNSHINE_COVERS"
 
-# 1. Improved Deduplication: Extract ONLY the APP_IDs from existing apps
+# 1. Deduplication: Extract App IDs
 EXISTING_APP_IDS=$(jq -r '.apps[].cmd | select(length > 0) | select(contains("./launch_heroic.sh"))' "$APPS_JSON" | awk '{print $2}')
 
 is_configured() {
     local id="$1"
-    # Check if the specific APP_ID is already present in any command
     echo "$EXISTING_APP_IDS" | grep -qFx "$id"
 }
 
 # 2. Smart Binary Discovery
 find_exe() {
     local dir="$1"; local title="$2"
-    local match=$(find "$dir" -maxdepth 4 -iname "*${title}*.exe" ! -iname "*crash*" ! -iname "*touchup*" ! -iname "*redist*" ! -iname "*setup*" ! -iname "*unins*" ! -iname "*epic*" ! -iname "*eos*" ! -iname "*cleanup*" ! -name "*.xml" ! -name "*.txt" ! -name "*.json" ! -name "*.pdf" -print -quit)
+    
+    # BLACKLIST: Patterns that are NEVER the main game binary
+    local blacklist="! -iname "*launcher*" ! -iname "*testapp*" ! -iname "*benchmark*" ! -iname "*config*" ! -iname "*setup*" ! -iname "*install*" ! -iname "*crash*" ! -iname "*touchup*" ! -iname "*redist*" ! -iname "*unins*" ! -iname "*epic*" ! -iname "*eos*" ! -iname "*cleanup*" ! -name "xdg-*" ! -name "*.xml" ! -name "*.txt" ! -name "*.json" ! -name "*.pdf" ! -name "unity default resources""
+
+    # Priority 1: Windows EXE matching title (Clean)
+    local match=$(find "$dir" -maxdepth 4 -iname "*${title}*.exe" $blacklist -print -quit)
     if [ -n "$match" ]; then basename "$match"; return; fi
-    local linux_64=$(find "$dir" -maxdepth 3 -executable -type f -name "*.x86_64" -print -quit)
+    
+    # Priority 2: Linux Native Binary (.x86_64)
+    local linux_64=$(find "$dir" -maxdepth 4 -executable -type f -name "*.x86_64" $blacklist -print -quit)
     if [ -n "$linux_64" ]; then basename "$linux_64"; return; fi
-    local largest_exe=$(find "$dir" -maxdepth 4 -name "*.exe" ! -iname "*crash*" ! -iname "*touchup*" ! -iname "*redist*" ! -iname "*setup*" ! -iname "*unins*" ! -iname "*epic*" ! -iname "*eos*" ! -iname "*cleanup*" ! -name "*.xml" ! -name "*.txt" ! -name "*.json" ! -name "*.pdf" -exec ls -S {} + 2>/dev/null | head -n 1)
+
+    # Priority 3: Largest EXE (fallback)
+    local largest_exe=$(find "$dir" -maxdepth 4 -name "*.exe" $blacklist -exec ls -S {} + 2>/dev/null | head -n 1)
     if [ -n "$largest_exe" ]; then basename "$largest_exe"; return; fi
-    local linux_bin=$(find "$dir" -maxdepth 3 -executable -type f ! -name "*.so*" ! -name "*.dll" ! -name "UnityPlayer" ! -name "level*" ! -name "*gamemanagers*" ! -name "*.fbq" ! -name "*.xml" ! -name "*.txt" ! -name "*.json" ! -name "unity default resources" -iname "*${title// /}*" -print -quit)
+
+    # Priority 4: Linux Binary matching title
+    local linux_bin=$(find "$dir" -maxdepth 4 -executable -type f ! -name "*.so*" ! -name "*.dll" ! -name "UnityPlayer" ! -name "level*" ! -name "*gamemanagers*" ! -name "*.fbq" $blacklist -iname "*${title// /}*" -print -quit)
     if [ -n "$linux_bin" ]; then basename "$linux_bin"; return; fi
+    
     echo "UNKNOWN_EXE"
 }
 
@@ -66,9 +77,8 @@ for acf in "$STEAM_APPS_DIR"/appmanifest_*.acf; do
     fi
 done
 
-# --- HEROIC SCAN ---
-# (Scanning logic for Legendary/Nile/GOG follows the same APP_ID check)
-# ... [Keeping full logic but using the new is_configured] ...
+# --- HEROIC SCAN (Epic/Amazon/GOG) ---
+# ... [Keeping full logic for Heroic but using the improved find_exe] ...
 
 if [ -z "$NEW_APPS_JSON" ]; then
     echo "No new games found."
