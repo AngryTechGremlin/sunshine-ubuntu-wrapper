@@ -1,43 +1,36 @@
-# Parental Control Game Wrapper for Sunshine
+# Sunshine Ubuntu Wrapper & Gamepad Monitoring
 
-This is gen AI that will be personalized at a future point
+A robust suite of scripts for Sunshine on Ubuntu/Linux that provides automated game discovery, idle timeouts, and immediate session termination when a game exits.
 
-A robust Bash wrapper script designed for launching games via **Heroic Games Launcher** or **Steam** on Linux. It is built specifically for game streaming setups using **Sunshine** and **Moonlight**.
-This wrapper adds a layer of parental control and session management that standard launchers lack.
+## 🚀 Key Features
 
-## 🛡️ Features
+- **Desktop Security**: Automatically closes the Sunshine session the moment a game is exited. Prevents unattended desktop access.
+- **Auto-Discovery**: Scans Steam, Heroic (Epic/GOG/Amazon), and Nile to automatically populate Sunshine's `apps.json`.
+- **Idle Watchdog**: Terminates the session after 10 minutes of inactivity. Filters out system "noise" (audio/video events) to only reset on actual user input.
+- **Emergency Kill Switch**: Press the "Guide/Mode" button on your gamepad to immediately close the game and the session.
 
-*   **🎮 Controller and Keyboard Security Lock**: Before the game launches, a "kiosk" lock screen (via Firefox) appears. The game only starts after a specific button code (e.g., A, B, A, B) is entered on a connected gamepad or keyboard. The default code sequence is A, B, A, B.
-*   **⏳ Playtime Limits**: Enforces a hard playtime limit (default: 1 hour). The game automatically closes when time is up.
-*   **💀 Kill Switch**: Pressing the **Xbox / Guide button** on the controller immediately kills the game and the session. Perfect for quickly exiting stubborn games.
-*   **👀 Process Watchdog**: Monitors the game process. If the game crashes or is closed manually, the script cleans up immediately.
-*   **📝 Logging**: Optional debug logging to track usage and issues.
+## 🛠 Setup
 
-## 📋 Requirements
+1. **Install Dependencies**:
+   ```bash
+   sudo apt install python3-evdev jq
+   ```
 
-*   **Linux OS**
-*   **Python 3** and **pip**
-*   **python-evdev** library (e.g., `sudo pip install evdev`)
-*   **Firefox** (Used for the lock screen kiosk mode)
-*   **Heroic Games Launcher** or **Steam**
-*   **Sunshine** (Required)
+2. **Permissions**:
+   Ensure your user has access to `/dev/input/`:
+   ```bash
+   sudo usermod -aG input $USER
+   ```
 
-## ⚙️ Configuration
+3. **Deploy Scripts**:
+   Place these scripts in your home directory:
+   - `launch_heroic.sh`
+   - `idle_watchdog.py`
+   - `kill_switch.py`
+   - `sync_games.sh`
 
-Configuration is done by editing the scripts directly.
-
-1.  **Secret Code**: Open `controller_lock.py` and modify the `UNLOCK_SEQUENCE` list.
-    *   This sequence applies to both controllers and keyboards.
-    *   `ACTION_A` is the 'A' button on a controller or 'A' key on the keyboard.
-    *   `ACTION_B` is the 'B' button on a controller or 'B' key on the keyboard.
-
-2.  **Playtime Limit**: Open `launch_heroic.sh` and change the `LIMIT=3600` variable (value is in seconds).
-
-3.  **Lock Screen Message**: Open `launch_heroic.sh` and find the `echo "<html>..."` line to change the message displayed on the lock screen.
-
-## 🚀 Usage
-
-The script requires 4 arguments:
-
-```bash
-./launch_heroic.sh <APP_ID> <PROCESS_NAME> <STARTUP_TIMEOUT> <RUNNER>
+4. **Sync Games**:
+   Run the sync script to populate Sunshine:
+   ```bash
+   ./sync_games.sh --apply
+   ```
